@@ -1,9 +1,11 @@
+*.bak
+*.log
 *~
+.~*
 .pypirc
 ~*
 tmp*
 tags
-data
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -17,6 +19,7 @@ __pycache__/
 .Python
 env/
 build/
+conda-dist
 develop-eggs/
 dist/
 downloads/
@@ -117,3 +120,12 @@ ENV/
 ehthumbs.db
 Thumbs.db
 .idea
+
+# pytest
+.pytest_cache
+
+# tools/trust-doc-nbs
+examples/.last_checked
+
+# symlinks to fastai
+examples/fastai

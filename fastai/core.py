@@ -1,101 +1,170 @@
-from .imports import *
-from .torch_imports import *
+"`fastai.core` contains essential util functions to format and split data"
+from .imports.core import *
 
-def sum_geom(a,r,n): return a*n if r==1 else math.ceil(a*(1-r**n)/(1-r))
+warnings.filterwarnings("ignore", message="numpy.dtype size changed")
+warnings.filterwarnings("ignore", message="numpy.ufunc size changed")
 
-conv_dict = {np.dtype('int8'): torch.LongTensor, np.dtype('int16'): torch.LongTensor,
-    np.dtype('int32'): torch.LongTensor, np.dtype('int64'): torch.LongTensor,
-    np.dtype('float32'): torch.FloatTensor, np.dtype('float64'): torch.FloatTensor}
+AnnealFunc = Callable[[Number,Number,float], Number]
+ArgStar = Collection[Any]
+BatchSamples = Collection[Tuple[Collection[int], int]]
+Classes = Collection[Any]
+DataFrameOrChunks = Union[DataFrame, pd.io.parsers.TextFileReader]
+FilePathList = Collection[Path]
+Floats = Union[float, Collection[float]]
+ImgLabel = str
+ImgLabels = Collection[ImgLabel]
+KeyFunc = Callable[[int], int]
+KWArgs = Dict[str,Any]
+ListOrItem = Union[Collection[Any],int,float,str]
+ListRules = Collection[Callable[[str],str]]
+ListSizes = Collection[Tuple[int,int]]
+NPArrayableList = Collection[Union[np.ndarray, list]]
+NPArrayList = Collection[np.ndarray]
+NPArrayMask = np.ndarray
+NPImage = np.ndarray
+OptDataFrame = Optional[DataFrame]
+OptListOrItem = Optional[ListOrItem]
+OptRange = Optional[Tuple[float,float]]
+OptStrTuple = Optional[Tuple[str,str]]
+OptStats = Optional[Tuple[np.ndarray, np.ndarray]]
+PathOrStr = Union[Path,str]
+PBar = Union[MasterBar, ProgressBar]
+Point=Tuple[float,float]
+Points=Collection[Point]
+Sizes = List[List[int]]
+SplitArrayList = List[Tuple[np.ndarray,np.ndarray]]
+StartOptEnd=Union[float,Tuple[float,float]]
+StrList = Collection[str]
+Tokens = Collection[Collection[str]]
+OptStrList = Optional[StrList]
 
-def T(a):
-    if torch.is_tensor(a): res = a
-    else:
-        a = np.array(np.ascontiguousarray(a))
-        if a.dtype in (np.int8, np.int16, np.int32, np.int64):
-            res = torch.LongTensor(a.astype(np.int64))
-        elif a.dtype in (np.float32, np.float64):
-            res = torch.FloatTensor(a.astype(np.float32))
-        else: raise NotImplementedError(a.dtype)
-    return to_gpu(res, async=True)
+def num_cpus()->int:
+    "Get number of cpus"
+    try:                   return len(os.sched_getaffinity(0))
+    except AttributeError: return os.cpu_count()
 
-def create_variable(x, volatile, requires_grad=False):
-    if not isinstance(x, Variable):
-        x = Variable(T(x), volatile=volatile, requires_grad=requires_grad)
-    return x
+def is_listy(x:Any)->bool: return isinstance(x, (tuple,list))
+def is_tuple(x:Any)->bool: return isinstance(x, tuple)
+def noop(x): return x
 
-def V_(x, requires_grad=False):
-    return create_variable(x, False, requires_grad=requires_grad)
-def V(x, requires_grad=False):
-    return [V_(o, requires_grad) for o in x] if isinstance(x,list) else V_(x, requires_grad)
+def to_int(b):
+    if is_listy(b): return [to_int(x) for x in b]
+    else:          return int(b)
 
-def VV_(x): return create_variable(x, True)
-def VV(x):  return [VV_(o) for o in x] if isinstance(x,list) else VV_(x)
+def ifnone(a:Any,b:Any)->Any:
+    "`a` if `a` is not None, otherwise `b`."
+    return b if a is None else a
 
-def to_np(v):
-    if isinstance(v, (list,tuple)): return [to_np(o) for o in v]
-    if isinstance(v, Variable): v=v.data
-    return v.cpu().numpy()
+def uniqueify(x:Series) -> List[Any]: return list(OrderedDict.fromkeys(x).keys())
+def idx_dict(a): return {v:k for k,v in enumerate(a)}
 
-USE_GPU=True
-def to_gpu(x, *args, **kwargs):
-    return x.cuda(*args, **kwargs) if torch.cuda.is_available() and USE_GPU else x
+def find_classes(folder:Path)->FilePathList:
+    "List of label subdirectories in imagenet-style `folder`."
+    classes = [d for d in folder.iterdir()
+               if d.is_dir() and not d.name.startswith('.')]
+    assert(len(classes)>0)
+    return sorted(classes, key=lambda d: d.name)
 
-def noop(*args, **kwargs): return
+def arrays_split(mask:NPArrayMask, *arrs:NPArrayableList)->SplitArrayList:
+    "Given `arrs` is [a,b,...] and `mask`index - return[(a[mask],a[~mask]),(b[mask],b[~mask]),...]."
+    mask = array(mask)
+    return list(zip(*[(a[mask],a[~mask]) for a in map(np.array, arrs)]))
 
-def split_by_idxs(seq, idxs):
-    last, sl = 0, len(seq)
-    for idx in idxs:
-        yield seq[last:idx]
-        last = idx
-    yield seq[last:]
+def random_split(valid_pct:float, *arrs:NPArrayableList)->SplitArrayList:
+    "Randomly split `arrs` with `valid_pct` ratio. good for creating validation set."
+    is_train = np.random.uniform(size=(len(arrs[0]),)) > valid_pct
+    return arrays_split(is_train, *arrs)
 
-def trainable_params_(m):
-    return [p for p in m.parameters() if p.requires_grad]
+def listify(p:OptListOrItem=None, q:OptListOrItem=None):
+    "Make `p` same length as `q`"
+    if p is None: p=[]
+    elif not isinstance(p, Iterable): p=[p]
+    n = q if type(q)==int else len(p) if q is None else len(q)
+    if len(p)==1: p = p * n
+    assert len(p)==n, f'List len mismatch ({len(p)} vs {n})'
+    return list(p)
 
-def chain_params(p):
-    if isinstance(p, (list,tuple)):
-        return list(chain(*[trainable_params_(o) for o in p]))
-    return trainable_params_(p)
+_camel_re1 = re.compile('(.)([A-Z][a-z]+)')
+_camel_re2 = re.compile('([a-z0-9])([A-Z])')
+def camel2snake(name:str)->str:
+    s1 = re.sub(_camel_re1, r'\1_\2', name)
+    return re.sub(_camel_re2, r'\1_\2', s1).lower()
 
-def set_trainable_attr(m,b):
-    m.trainable=b
-    for p in m.parameters(): p.requires_grad=b
+def even_mults(start:float, stop:float, n:int)->np.ndarray:
+    "Build evenly stepped schedule from `start` to `stop` in `n` steps."
+    mult = stop/start
+    step = mult**(1/(n-1))
+    return np.array([start*(step**i) for i in range(n)])
 
-def apply_leaf(m, f):
-    c = children(m)
-    if isinstance(m, nn.Module): f(m)
-    if len(c)>0:
-        for l in c: apply_leaf(l,f)
+def extract_kwargs(names:Collection[str], kwargs:KWArgs):
+    "Extracs the keys in `names` from the `kwargs`."
+    new_kwargs = {}
+    for arg_name in names:
+        if arg_name in kwargs:
+            arg_val = kwargs.pop(arg_name)
+            new_kwargs[arg_name] = arg_val
+    return new_kwargs, kwargs
 
-def set_trainable(l, b):
-    apply_leaf(l, lambda m: set_trainable_attr(m,b))
+def partition(a:Collection, sz:int) -> List[Collection]:
+    "Split iterables `a` in equal parts of size `sz`"
+    return [a[i:i+sz] for i in range(0, len(a), sz)]
 
-def SGD_Momentum(momentum):
-    return lambda *args, **kwargs: optim.SGD(*args, momentum=momentum, **kwargs)
+def partition_by_cores(a:Collection, n_cpus:int) -> List[Collection]:
+    "Split data in `a` equally among `n_cpus` cores"
+    return partition(a, len(a)//n_cpus + 1)
 
-def one_hot(a,c): return np.eye(c)[a]
+def get_chunk_length(data:Union[PathOrStr, DataFrame, pd.io.parsers.TextFileReader], chunksize:Optional[int] = None) -> int:
+    "Read the number of chunks in a pandas `DataFrame`."
+    if (type(data) == DataFrame):  return 1
+    elif (type(data) == pd.io.parsers.TextFileReader):
+        dfs = pd.read_csv(data.f, header=None, chunksize=data.chunksize)
+    else:  dfs = pd.read_csv(data, header=None, chunksize=chunksize)
+    l = 0
+    for _ in dfs: l+=1
+    return l
 
-def partition(a, sz): return [a[i:i+sz] for i in range(0, len(a), sz)]
+def get_total_length(csv_name:PathOrStr, chunksize:int) -> int:
+    "Read the the total length of a pandas `DataFrame`."
+    dfs = pd.read_csv(csv_name, header=None, chunksize=chunksize)
+    l = 0
+    for df in dfs: l+=len(df)
+    return l
 
-def partition_by_cores(a):
-    return partition(a, len(a)//num_cpus() + 1)
+def maybe_copy(old_fnames:Collection[PathOrStr], new_fnames:Collection[PathOrStr]):
+    "Copy the `old_fnames` to `new_fnames` location if `new_fnames` don't exist or are less recent."
+    os.makedirs(os.path.dirname(new_fnames[0]), exist_ok=True)
+    for old_fname,new_fname in zip(old_fnames, new_fnames):
+        if not os.path.isfile(new_fname) or os.path.getmtime(new_fname) < os.path.getmtime(old_fname):
+            shutil.copyfile(old_fname, new_fname)
 
-def num_cpus():
-    try:
-        return len(os.sched_getaffinity(0))
-    except AttributeError:
-        return os.cpu_count()
+def series2cat(df:DataFrame, *col_names):
+    "Categorifies the columns `col_names` in `df`."
+    for c in listify(col_names): df[c] = df[c].astype('category').cat.as_ordered()
 
+class ItemBase():
+    "All transformable dataset items use this type."
+    @property
+    @abstractmethod
+    def device(self): pass
+    @property
+    @abstractmethod
+    def data(self): pass
 
-class BasicModel():
-    def __init__(self,model,name='unnamed'): self.model,self.name = model,name
-    def get_layer_groups(self, do_fc=False): return children(self.model)
+def download_url(url:str, dest:str, overwrite:bool=False)->None:
+    "Download `url` to `dest` unless is exists and not `overwrite`."
+    if os.path.exists(dest) and not overwrite: return
+    u = requests.get(url, stream=True)
+    file_size = int(u.headers["Content-Length"])
+    u = u.raw
 
-class SingleModel(BasicModel):
-    def get_layer_groups(self): return [self.model]
+    with open(dest,'wb') as f:
+        pbar = progress_bar(range(file_size), auto_update=False)
+        nbytes,buffer = 0,[1]
+        while len(buffer):
+            buffer = u.read(8192)
+            nbytes += len(buffer)
+            pbar.update(nbytes)
+            f.write(buffer)
 
-def save(fn, a): pickle.dump(a, open(fn,'wb'))
-def load(fn): return pickle.load(open(fn,'rb'))
-def load2(fn): return pickle.load(open(fn,'rb'), encoding='iso-8859-1')
-
-def load_array(fname): return bcolz.open(fname)[:]
+def range_of(x): return list(range(len(x)))
+def arange_of(x): return np.arange(len(x))
